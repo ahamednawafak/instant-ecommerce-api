@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ahamed Bakery - WhatsApp Store</title>
+  <style>
+    :root {
+      --primary: #25D366;
+      --primary-dark: #1ebe5d;
+      --bg: #f8fafc;
+      --card-bg: #ffffff;
+      --text: #0f172a;
+      --border: #e2e8f0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 20px;
+      display: flex;
+      justify-content: center;
+    }
+
+    .store-container {
+      width: 100%;
+      max-width: 600px;
+      background: var(--card-bg);
+      border-radius: 16px;
+      padding: 24px;
+      box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.05);
+    }
+
+    .header {
+      text-align: center;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 16px;
+      margin-bottom: 24px;
+    }
+
+    .header h1 { margin: 0 0 6px 0; font-size: 1.6rem; }
+    .header p { margin: 0; color: #64748b; font-size: 0.95rem; }
+
+    .section-title {
+      font-size: 1.1rem;
+      font-weight: 600;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .product-grid {
+      display: grid;
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+
+    .product-card {
+      border: 2px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .product-card:hover { border-color: #cbd5e1; }
+    .product-card.selected {
+      border-color: var(--primary);
+      background-color: #f0fdf4;
+    }
+
+    .product-info h3 { margin: 0 0 4px 0; font-size: 1rem; }
+    .product-info p { margin: 0; color: #64748b; font-size: 0.85rem; }
+    .product-price { font-weight: 700; font-size: 1.05rem; color: var(--text); }
+
+    .form-group { margin-bottom: 14px; }
+    .form-group label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 6px; }
+    .form-group input, .form-group textarea {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-sizing: border-box;
+      font-size: 0.95rem;
+    }
+
+    .checkout-btn {
+      width: 100%;
+      background-color: var(--primary);
+      color: white;
+      border: none;
+      padding: 14px;
+      font-size: 1rem;
+      font-weight: 700;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    .checkout-btn:hover { background-color: var(--primary-dark); }
+    #status { margin-top: 12px; text-align: center; font-size: 0.9rem; font-weight: 600; }
+  </style>
+</head>
+<body>
+
+<div class="store-container">
+  <div class="header">
+    <h1>🧁 Ahamed Bakery</h1>
+    <p>Select products and checkout directly via WhatsApp</p>
+  </div>
+
+  <div class="section-title">
+    <span>1. Select an Item</span>
+  </div>
+  
+  <div id="catalog" class="product-grid">
+    <p>Fetching menu from backend API...</p>
+  </div>
+
+  <div class="section-title">
+    <span>2. Delivery Information</span>
+  </div>
+
+  <form id="checkoutForm">
+    <div class="form-group">
+      <label for="name">Full Name</label>
+      <input type="text" id="name" placeholder="e.g. Sarah Ahmed" required>
+    </div>
+
+    <div class="form-group">
+      <label for="phone">WhatsApp Phone Number</label>
+      <input type="tel" id="phone" placeholder="e.g. +97455112233" required>
+    </div>
+
+    <div class="form-group">
+      <label for="address">Delivery Address</label>
+      <textarea id="address" rows="2" placeholder="e.g. Building 12, West Bay, Doha" required></textarea>
+    </div>
+
+    <div class="form-group">
+      <label for="notes">Special Order Request (Optional)</label>
+      <input type="text" id="notes" placeholder="e.g. Please write 'Happy Birthday' on top">
+    </div>
+
+    <button type="submit" class="checkout-btn">📲 Place WhatsApp Order</button>
+  </form>
+
+  <div id="status"></div>
+</div>
+
+<script>
+  const STORE_SLUG = "ahamed-bakery";
+  const API_BASE = "https://instant-ecommerce-api.onrender.com";
+  
+  let selectedProductId = null;
+
+  // 1. FETCH PRODUCTS FROM API: GET /stores/{slug}/products
+  async function loadCatalog() {
+    const catalogDiv = document.getElementById("catalog");
+    try {
+      const response = await fetch(`${API_BASE}/stores/${STORE_SLUG}/products`);
+      if (!response.ok) throw new Error("Store or products not found.");
+
+      const products = await response.json();
+
+      if (products.length === 0) {
+        catalogDiv.innerHTML = "<p>No active products in catalog.</p>";
+        return;
+      }
+
+      catalogDiv.innerHTML = products.map((product, index) => `
+        <div class="product-card ${index === 0 ? 'selected' : ''}" onclick="selectProduct(${product.id}, this)">
+          <div class="product-info">
+            <h3>${product.name}</h3>
+            <p>${product.description || 'Freshly made'}</p>
+          </div>
+          <div class="product-price">QAR ${product.price.toFixed(2)}</div>
+        </div>
+      `).join("");
+
+      // Select first product by default
+      selectedProductId = products[0].id;
+
+    } catch (err) {
+      catalogDiv.innerHTML = `<p style="color: red;">API Error: ${err.message}</p>`;
+    }
+  }
+
+  function selectProduct(id, cardElement) {
+    document.querySelectorAll('.product-card').forEach(c => c.classList.remove('selected'));
+    cardElement.classList.add('selected');
+    selectedProductId = id;
+  }
+
+  // 2. SUBMIT CHECKOUT TO API: POST /stores/{slug}/checkout/whatsapp
+  document.getElementById("checkoutForm").addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    if (!selectedProductId) {
+      alert("Please select a product first.");
+      return;
+    }
+
+    const statusDiv = document.getElementById("status");
+    statusDiv.style.color = "#0284c7";
+    statusDiv.innerText = "Connecting to API and generating order link...";
+
+    const payload = {
+      customer_name: document.getElementById("name").value,
+      customer_phone: document.getElementById("phone").value,
+      delivery_address: document.getElementById("address").value,
+      notes: document.getElementById("notes").value || null,
+      items: [
+        {
+          product_id: selectedProductId,
+          quantity: 1
+        }
+      ]
+    };
+
+    try {
+      const response = await fetch(`${API_BASE}/stores/${STORE_SLUG}/checkout/whatsapp`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) throw new Error("Failed to construct checkout session.");
+
+      const data = await response.json();
+
+      statusDiv.style.color = "#16a34a";
+      statusDiv.innerText = "Order created! Launching WhatsApp...";
+
+      // REDIRECT USER TO WHATSAPP
+      window.location.href = data.whatsapp_redirect_url;
+
+    } catch (err) {
+      statusDiv.style.color = "#dc2626";
+      statusDiv.innerText = `Error: ${err.message}`;
+    }
+  });
+
+  // Initialize catalog on load
+  loadCatalog();
+</script>
+
+</body>
+</html>
