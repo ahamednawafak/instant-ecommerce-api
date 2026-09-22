@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Ahamed Bakery - WhatsApp Store</title>
+  <title>Ahamed Bakery - Online Store</title>
   <style>
     :root {
       --primary: #25D366;
@@ -37,7 +37,7 @@
       text-align: center;
       border-bottom: 1px solid var(--border);
       padding-bottom: 16px;
-      margin-bottom: 24px;
+      margin-bottom: 20px;
     }
 
     .header h1 { margin: 0 0 6px 0; font-size: 1.6rem; }
@@ -47,11 +47,40 @@
       font-size: 1.1rem;
       font-weight: 600;
       margin-bottom: 12px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
     }
 
+    /* Category Navigation Tabs */
+    .category-tabs {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding-bottom: 8px;
+      margin-bottom: 16px;
+      scrollbar-width: thin;
+    }
+
+    .tab-btn {
+      background: #f1f5f9;
+      border: 1px solid var(--border);
+      color: #475569;
+      padding: 8px 16px;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.2s ease;
+    }
+
+    .tab-btn:hover { background: #e2e8f0; }
+
+    .tab-btn.active {
+      background: var(--primary);
+      color: white;
+      border-color: var(--primary);
+    }
+
+    /* Product Cards */
     .product-grid {
       display: grid;
       gap: 12px;
@@ -70,15 +99,27 @@
     }
 
     .product-card:hover { border-color: #cbd5e1; }
+
     .product-card.selected {
       border-color: var(--primary);
       background-color: #f0fdf4;
     }
 
     .product-info h3 { margin: 0 0 4px 0; font-size: 1rem; }
-    .product-info p { margin: 0; color: #64748b; font-size: 0.85rem; }
+    .product-info p { margin: 0 0 6px 0; color: #64748b; font-size: 0.85rem; }
+    .badge {
+      display: inline-block;
+      background: #e2e8f0;
+      color: #334155;
+      font-size: 0.75rem;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-weight: 500;
+    }
+
     .product-price { font-weight: 700; font-size: 1.05rem; color: var(--text); }
 
+    /* Checkout Form */
     .form-group { margin-bottom: 14px; }
     .form-group label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 6px; }
     .form-group input, .form-group textarea {
@@ -115,17 +156,19 @@
     <p>Select products and checkout directly via WhatsApp</p>
   </div>
 
-  <div class="section-title">
-    <span>1. Select an Item</span>
+  <div class="section-title">1. Select an Item</div>
+
+  <!-- Dynamic Category Tabs -->
+  <div id="categoryTabs" class="category-tabs">
+    <button class="tab-btn active" onclick="filterByCategory(null, this)">All</button>
   </div>
   
+  <!-- Dynamic Product Grid -->
   <div id="catalog" class="product-grid">
-    <p>Fetching menu from backend API...</p>
+    <p>Fetching catalog from API...</p>
   </div>
 
-  <div class="section-title">
-    <span>2. Delivery Information</span>
-  </div>
+  <div class="section-title">2. Delivery Information</div>
 
   <form id="checkoutForm">
     <div class="form-group">
@@ -159,32 +202,69 @@
   const API_BASE = "https://instant-ecommerce-api.onrender.com";
   
   let selectedProductId = null;
+  let activeCategory = null;
 
-  // 1. FETCH PRODUCTS FROM API: GET /stores/{slug}/products
-  async function loadCatalog() {
-    const catalogDiv = document.getElementById("catalog");
+  // 1. FETCH CATEGORIES: GET /stores/{slug}/categories
+  async function loadCategories() {
+    const tabsContainer = document.getElementById("categoryTabs");
     try {
-      const response = await fetch(`${API_BASE}/stores/${STORE_SLUG}/products`);
+      const res = await fetch(`${API_BASE}/stores/${STORE_SLUG}/categories`);
+      if (!res.ok) return;
+
+      const categories = await res.json();
+
+      if (categories.length > 0) {
+        // Build tab buttons dynamically
+        const categoryButtons = categories.map(cat => `
+          <button class="tab-btn" onclick="filterByCategory('${cat}', this)">${cat}</button>
+        `).join("");
+
+        tabsContainer.innerHTML = `
+          <button class="tab-btn active" onclick="filterByCategory(null, this)">All</button>
+          ${categoryButtons}
+        `;
+      }
+    } catch (err) {
+      console.warn("Could not load categories:", err);
+    }
+  }
+
+  // 2. FETCH PRODUCTS: GET /stores/{slug}/products?category=...
+  async function loadCatalog(category = null) {
+    const catalogDiv = document.getElementById("catalog");
+    catalogDiv.innerHTML = "<p>Loading items...</p>";
+
+    // Append ?category= parameter if selected
+    let url = `${API_BASE}/stores/${STORE_SLUG}/products`;
+    if (category) {
+      url += `?category=${encodeURIComponent(category)}`;
+    }
+
+    try {
+      const response = await fetch(url);
       if (!response.ok) throw new Error("Store or products not found.");
 
       const products = await response.json();
 
       if (products.length === 0) {
-        catalogDiv.innerHTML = "<p>No active products in catalog.</p>";
+        catalogDiv.innerHTML = "<p>No products available in this category.</p>";
+        selectedProductId = null;
         return;
       }
 
+      // Render product cards
       catalogDiv.innerHTML = products.map((product, index) => `
         <div class="product-card ${index === 0 ? 'selected' : ''}" onclick="selectProduct(${product.id}, this)">
           <div class="product-info">
             <h3>${product.name}</h3>
-            <p>${product.description || 'Freshly made'}</p>
+            <p>${product.description || 'Freshly prepared'}</p>
+            <span class="badge">${product.category || 'General'}</span>
           </div>
           <div class="product-price">QAR ${product.price.toFixed(2)}</div>
         </div>
       `).join("");
 
-      // Select first product by default
+      // Automatically select the first item in the visible view
       selectedProductId = products[0].id;
 
     } catch (err) {
@@ -192,13 +272,23 @@
     }
   }
 
+  // Handle category tab clicks
+  function filterByCategory(category, buttonElement) {
+    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+    buttonElement.classList.add('active');
+    
+    activeCategory = category;
+    loadCatalog(category);
+  }
+
+  // Handle product card selections
   function selectProduct(id, cardElement) {
     document.querySelectorAll('.product-card').forEach(c => c.classList.remove('selected'));
     cardElement.classList.add('selected');
     selectedProductId = id;
   }
 
-  // 2. SUBMIT CHECKOUT TO API: POST /stores/{slug}/checkout/whatsapp
+  // 3. SUBMIT ORDER TO API: POST /stores/{slug}/checkout/whatsapp
   document.getElementById("checkoutForm").addEventListener("submit", async (e) => {
     e.preventDefault();
 
@@ -231,14 +321,14 @@
         body: JSON.stringify(payload)
       });
 
-      if (!response.ok) throw new Error("Failed to construct checkout session.");
+      if (!response.ok) throw new Error("Failed to generate WhatsApp order link.");
 
       const data = await response.json();
 
       statusDiv.style.color = "#16a34a";
       statusDiv.innerText = "Order created! Launching WhatsApp...";
 
-      // REDIRECT USER TO WHATSAPP
+      // Redirect user to WhatsApp redirect URL
       window.location.href = data.whatsapp_redirect_url;
 
     } catch (err) {
@@ -247,7 +337,8 @@
     }
   });
 
-  // Initialize catalog on load
+  // Initialize data on page load
+  loadCategories();
   loadCatalog();
 </script>
 
