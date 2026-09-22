@@ -2,14 +2,6 @@
 
 
 
-\[!\[FastAPI](https://img.shields.io/badge/FastAPI-005571?style=for-the-badge\&logo=fastapi)](https://fastapi.tiangolo.com/)
-
-\[!\[Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge\&logo=python\&logoColor=white)](https://www.python.org/)
-
-\[!\[SQLite](https://img.shields.io/badge/SQLite-003B57?style=for-the-badge\&logo=sqlite\&logoColor=white)](https://www.sqlite.org/)
-
-\[!\[Render](https://img.shields.io/badge/Render-46E3B7?style=for-the-badge\&logo=render\&logoColor=black)](https://render.com/)
-
 
 
 A lightweight multi-tenant e-commerce backend built with \*\*Python\*\* and \*\*FastAPI\*\*. Designed for local shops and home-based businesses, this API allows vendors to manage catalogs and generate structured \*\*instant WhatsApp order links\*\* without relying on complex payment gateways.
