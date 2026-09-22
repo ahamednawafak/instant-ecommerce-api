@@ -1,3 +1,4 @@
+import os
 from urllib.parse import quote
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException, Depends, status
@@ -6,14 +7,23 @@ from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey, Boolean
 from sqlalchemy.orm import declarative_base, sessionmaker, Session, relationship
 
-# --- 1. DATABASE SETUP ---
-SQLALCHEMY_DATABASE_URL = "sqlite:///./ecommerce.db"
+# --- 1. DATABASE SETUP (PostgreSQL / SQLite Fallback) ---
+# Read DATABASE_URL from Render environment variables; fallback to SQLite locally
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./ecommerce.db")
 
-engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
+# Render uses 'postgres://' prefixes, but SQLAlchemy 2.0+ requires 'postgresql://'
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+# SQLite requires check_same_thread=False; PostgreSQL does not
+connect_args = {"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
+
+engine = create_engine(DATABASE_URL, connect_args=connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# Store Model (Multi-tenant)
+
+# --- 2. DATABASE MODELS ---
 class DBStore(Base):
     __tablename__ = "stores"
 
@@ -26,7 +36,7 @@ class DBStore(Base):
 
     products = relationship("DBProduct", back_populates="store")
 
-# Product Model
+
 class DBProduct(Base):
     __tablename__ = "products"
 
@@ -39,10 +49,11 @@ class DBProduct(Base):
 
     store = relationship("DBStore", back_populates="products")
 
+
 Base.metadata.create_all(bind=engine)
 
 
-# --- 2. SCHEMAS (Pydantic Models) ---
+# --- 3. SCHEMAS (Pydantic Models) ---
 class ProductCreate(BaseModel):
     name: str
     description: Optional[str] = None
@@ -82,7 +93,7 @@ class CheckoutRequest(BaseModel):
     items: List[CartItem]
 
 
-# --- 3. DEPENDENCY ---
+# --- 4. DEPENDENCY ---
 def get_db():
     db = SessionLocal()
     try:
@@ -91,20 +102,20 @@ def get_db():
         db.close()
 
 
-# --- 4. FASTAPI APP & CORS MIDDLEWARE ---
+# --- 5. FASTAPI APP & CORS MIDDLEWARE ---
 app = FastAPI(title="Instant E-Commerce WhatsApp API")
 
-# Enable CORS for external frontend websites (e.g., index.html, React, GitHub Pages)
+# Enable CORS for external frontend websites (e.g., index.html, GitHub Pages, React)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all frontend websites to connect
+    allow_origins=["*"],  # Allows all domains to connect
     allow_credentials=True,
     allow_methods=["*"],  # Allows GET, POST, PUT, DELETE
     allow_headers=["*"],
 )
 
 
-# --- 5. ENDPOINTS ---
+# --- 6. ENDPOINTS ---
 
 @app.get("/")
 def home():
