@@ -8,14 +8,12 @@ from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey
 from sqlalchemy.orm import declarative_base, sessionmaker, Session, relationship
 
 # --- 1. DATABASE SETUP (PostgreSQL / SQLite Fallback) ---
-# Read DATABASE_URL from Render environment variables; fallback to SQLite locally
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///./ecommerce.db")
 
 # Render uses 'postgres://' prefixes, but SQLAlchemy 2.0+ requires 'postgresql://'
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-# SQLite requires check_same_thread=False; PostgreSQL does not
 connect_args = {"check_same_thread": False} if "sqlite" in DATABASE_URL else {}
 
 engine = create_engine(DATABASE_URL, connect_args=connect_args)
@@ -30,7 +28,7 @@ class DBStore(Base):
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)
     slug = Column(String, unique=True, index=True)  # e.g. "ahamed-bakery"
-    whatsapp_number = Column(String)  # International format without + (e.g. 97455551234)
+    whatsapp_number = Column(String)  # Format without + (e.g. 97455551234)
     currency = Column(String, default="USD")
     is_active = Column(Boolean, default=True)
 
@@ -45,6 +43,7 @@ class DBProduct(Base):
     name = Column(String, index=True)
     description = Column(String, nullable=True)
     price = Column(Float)
+    category = Column(String, default="General", index=True)  # Category support
     in_stock = Column(Boolean, default=True)
 
     store = relationship("DBStore", back_populates="products")
@@ -58,6 +57,7 @@ class ProductCreate(BaseModel):
     name: str
     description: Optional[str] = None
     price: float
+    category: Optional[str] = "General"  # e.g., Cakes, Pastries, Beverages
     in_stock: bool = True
 
 class ProductResponse(ProductCreate):
@@ -80,7 +80,6 @@ class StoreResponse(StoreCreate):
     class Config:
         from_attributes = True
 
-# Checkout Request Models
 class CartItem(BaseModel):
     product_id: int
     quantity: int
@@ -105,12 +104,11 @@ def get_db():
 # --- 5. FASTAPI APP & CORS MIDDLEWARE ---
 app = FastAPI(title="Instant E-Commerce WhatsApp API")
 
-# Enable CORS for external frontend websites (e.g., index.html, GitHub Pages, React)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all domains to connect
+    allow_origins=["*"],  # Allows frontend websites to connect
     allow_credentials=True,
-    allow_methods=["*"],  # Allows GET, POST, PUT, DELETE
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
@@ -143,7 +141,7 @@ def get_store(slug: str, db: Session = Depends(get_db)):
     return store
 
 
-# --- PRODUCT CATALOG ---
+# --- PRODUCT CATALOG & CATEGORIES ---
 @app.post("/stores/{slug}/products", response_model=ProductResponse, status_code=status.HTTP_201_CREATED)
 def add_product(slug: str, product: ProductCreate, db: Session = Depends(get_db)):
     store = db.query(DBStore).filter(DBStore.slug == slug).first()
@@ -157,11 +155,32 @@ def add_product(slug: str, product: ProductCreate, db: Session = Depends(get_db)
     return db_product
 
 @app.get("/stores/{slug}/products", response_model=List[ProductResponse])
-def list_products(slug: str, db: Session = Depends(get_db)):
+def list_products(slug: str, category: Optional[str] = None, db: Session = Depends(get_db)):
     store = db.query(DBStore).filter(DBStore.slug == slug).first()
     if not store:
         raise HTTPException(status_code=404, detail="Store not found.")
-    return db.query(DBProduct).filter(DBProduct.store_id == store.id, DBProduct.in_stock == True).all()
+    
+    query = db.query(DBProduct).filter(DBProduct.store_id == store.id, DBProduct.in_stock == True)
+    
+    # Optional filtering by category query parameter
+    if category:
+        query = query.filter(DBProduct.category == category)
+        
+    return query.all()
+
+@app.get("/stores/{slug}/categories")
+def list_categories(slug: str, db: Session = Depends(get_db)):
+    store = db.query(DBStore).filter(DBStore.slug == slug).first()
+    if not store:
+        raise HTTPException(status_code=404, detail="Store not found.")
+    
+    # Query distinct categories available in store
+    categories = db.query(DBProduct.category).filter(
+        DBProduct.store_id == store.id, 
+        DBProduct.in_stock == True
+    ).distinct().all()
+    
+    return [c[0] for c in categories if c[0]]
 
 
 # --- WHATSAPP CHECKOUT ENGINE ---
@@ -174,7 +193,6 @@ def generate_whatsapp_order_link(slug: str, checkout: CheckoutRequest, db: Sessi
     if not checkout.items:
         raise HTTPException(status_code=400, detail="Cart is empty.")
 
-    # Calculate total and build line items string
     order_items_text = ""
     total_price = 0.0
 
@@ -187,7 +205,6 @@ def generate_whatsapp_order_link(slug: str, checkout: CheckoutRequest, db: Sessi
         total_price += item_total
         order_items_text += f"• {item.quantity}x {product.name} ({store.currency} {item_total:.2f})\n"
 
-    # Format structured message for WhatsApp
     message = (
         f"🛍️ *NEW ORDER - {store.name.upper()}*\n"
         f"----------------------------------------\n"
@@ -208,7 +225,6 @@ def generate_whatsapp_order_link(slug: str, checkout: CheckoutRequest, db: Sessi
         f"Please confirm availability and estimated delivery time! Thank you."
     )
 
-    # Encode message into a valid URL format
     encoded_message = quote(message)
     whatsapp_url = f"https://wa.me/{store.whatsapp_number}?text={encoded_message}"
 
