@@ -1,6 +1,7 @@
 from urllib.parse import quote
 from typing import List, Optional
 from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey, Boolean
 from sqlalchemy.orm import declarative_base, sessionmaker, Session, relationship
@@ -90,8 +91,20 @@ def get_db():
         db.close()
 
 
-# --- 4. FASTAPI APP & ENDPOINTS ---
+# --- 4. FASTAPI APP & CORS MIDDLEWARE ---
 app = FastAPI(title="Instant E-Commerce WhatsApp API")
+
+# Enable CORS for external frontend websites (e.g., index.html, React, GitHub Pages)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows all frontend websites to connect
+    allow_credentials=True,
+    allow_methods=["*"],  # Allows GET, POST, PUT, DELETE
+    allow_headers=["*"],
+)
+
+
+# --- 5. ENDPOINTS ---
 
 @app.get("/")
 def home():
