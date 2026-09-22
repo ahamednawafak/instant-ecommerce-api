@@ -165,7 +165,7 @@
   
   <!-- Dynamic Product Grid -->
   <div id="catalog" class="product-grid">
-    <p>Fetching catalog from API...</p>
+    <p>⏳ Connecting to server... (If sleeping, may take 30s)</p>
   </div>
 
   <div class="section-title">2. Delivery Information</div>
@@ -202,98 +202,103 @@
   const API_BASE = "https://instant-ecommerce-api.onrender.com";
   
   let selectedProductId = null;
-  let activeCategory = null;
+
+  // Safe fetch helper that gracefully traps network issues
+  async function safeFetch(url) {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) return { error: true, status: response.status };
+      const data = await response.json();
+      return { error: false, data };
+    } catch (err) {
+      return { error: true, message: err.message };
+    }
+  }
 
   // 1. FETCH CATEGORIES: GET /stores/{slug}/categories
   async function loadCategories() {
     const tabsContainer = document.getElementById("categoryTabs");
-    try {
-      const res = await fetch(`${API_BASE}/stores/${STORE_SLUG}/categories`);
-      if (!res.ok) return;
+    const result = await safeFetch(`${API_BASE}/stores/${STORE_SLUG}/categories`);
 
-      const categories = await res.json();
-
-      if (categories.length > 0) {
-        // Build tab buttons dynamically
-        const categoryButtons = categories.map(cat => `
-          <button class="tab-btn" onclick="filterByCategory('${cat}', this)">${cat}</button>
-        `).join("");
-
-        tabsContainer.innerHTML = `
-          <button class="tab-btn active" onclick="filterByCategory(null, this)">All</button>
-          ${categoryButtons}
-        `;
-      }
-    } catch (err) {
-      console.warn("Could not load categories:", err);
+    if (result.error || !Array.isArray(result.data) || result.data.length === 0) {
+      tabsContainer.style.display = "none";
+      return;
     }
+
+    tabsContainer.style.display = "flex";
+    const categoryButtons = result.data.map(cat => `
+      <button class="tab-btn" onclick="filterByCategory('${cat}', this)">${cat}</button>
+    `).join("");
+
+    tabsContainer.innerHTML = `
+      <button class="tab-btn active" onclick="filterByCategory(null, this)">All</button>
+      ${categoryButtons}
+    `;
   }
 
-  // 2. FETCH PRODUCTS: GET /stores/{slug}/products?category=...
+  // 2. FETCH PRODUCTS: GET /stores/{slug}/products
   async function loadCatalog(category = null) {
     const catalogDiv = document.getElementById("catalog");
-    catalogDiv.innerHTML = "<p>Loading items...</p>";
+    catalogDiv.innerHTML = "<p>⏳ Loading store menu...</p>";
 
-    // Append ?category= parameter if selected
     let url = `${API_BASE}/stores/${STORE_SLUG}/products`;
     if (category) {
       url += `?category=${encodeURIComponent(category)}`;
     }
 
-    try {
-      const response = await fetch(url);
-      if (!response.ok) throw new Error("Store or products not found.");
+    const result = await safeFetch(url);
 
-      const products = await response.json();
-
-      if (products.length === 0) {
-        catalogDiv.innerHTML = "<p>No products available in this category.</p>";
-        selectedProductId = null;
-        return;
-      }
-
-      // Render product cards
-      catalogDiv.innerHTML = products.map((product, index) => `
-        <div class="product-card ${index === 0 ? 'selected' : ''}" onclick="selectProduct(${product.id}, this)">
-          <div class="product-info">
-            <h3>${product.name}</h3>
-            <p>${product.description || 'Freshly prepared'}</p>
-            <span class="badge">${product.category || 'General'}</span>
-          </div>
-          <div class="product-price">QAR ${product.price.toFixed(2)}</div>
+    if (result.error) {
+      catalogDiv.innerHTML = `
+        <div style="background: #fef2f2; border: 1px solid #fca5a5; padding: 12px; border-radius: 8px; color: #991b1b;">
+          <strong>⚠️ Store Unavailable or Sleeping</strong><br>
+          <small>Server is waking up or store slug "${STORE_SLUG}" needs to be registered in PostgreSQL.</small>
         </div>
-      `).join("");
-
-      // Automatically select the first item in the visible view
-      selectedProductId = products[0].id;
-
-    } catch (err) {
-      catalogDiv.innerHTML = `<p style="color: red;">API Error: ${err.message}</p>`;
+      `;
+      selectedProductId = null;
+      return;
     }
+
+    const products = result.data;
+
+    if (products.length === 0) {
+      catalogDiv.innerHTML = "<p>No products available in this category.</p>";
+      selectedProductId = null;
+      return;
+    }
+
+    catalogDiv.innerHTML = products.map((product, index) => `
+      <div class="product-card ${index === 0 ? 'selected' : ''}" onclick="selectProduct(${product.id}, this)">
+        <div class="product-info">
+          <h3>${product.name}</h3>
+          <p>${product.description || 'Freshly prepared'}</p>
+          <span class="badge">${product.category || 'General'}</span>
+        </div>
+        <div class="product-price">QAR ${product.price.toFixed(2)}</div>
+      </div>
+    `).join("");
+
+    selectedProductId = products[0].id;
   }
 
-  // Handle category tab clicks
   function filterByCategory(category, buttonElement) {
     document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
     buttonElement.classList.add('active');
-    
-    activeCategory = category;
     loadCatalog(category);
   }
 
-  // Handle product card selections
   function selectProduct(id, cardElement) {
     document.querySelectorAll('.product-card').forEach(c => c.classList.remove('selected'));
     cardElement.classList.add('selected');
     selectedProductId = id;
   }
 
-  // 3. SUBMIT ORDER TO API: POST /stores/{slug}/checkout/whatsapp
+  // 3. SUBMIT CHECKOUT TO API
   document.getElementById("checkoutForm").addEventListener("submit", async (e) => {
     e.preventDefault();
 
     if (!selectedProductId) {
-      alert("Please select a product first.");
+      alert("Please select a valid product first.");
       return;
     }
 
@@ -321,14 +326,13 @@
         body: JSON.stringify(payload)
       });
 
-      if (!response.ok) throw new Error("Failed to generate WhatsApp order link.");
+      if (!response.ok) throw new Error("Failed to generate order link.");
 
       const data = await response.json();
 
       statusDiv.style.color = "#16a34a";
       statusDiv.innerText = "Order created! Launching WhatsApp...";
 
-      // Redirect user to WhatsApp redirect URL
       window.location.href = data.whatsapp_redirect_url;
 
     } catch (err) {
@@ -337,7 +341,7 @@
     }
   });
 
-  // Initialize data on page load
+  // Init
   loadCategories();
   loadCatalog();
 </script>
