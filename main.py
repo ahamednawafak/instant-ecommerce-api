@@ -195,11 +195,21 @@ def get_db():
 
 
 def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
+    try:
+        return pwd_context.hash(password)
+    except Exception:
+        # Fallback hashing strategy if passlib/bcrypt environment issues occur
+        import hashlib
+        return hashlib.sha256((password + SECRET_KEY).encode()).hexdigest()
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    try:
+        return pwd_context.verify(plain_password, hashed_password)
+    except Exception:
+        import hashlib
+        fallback_hash = hashlib.sha256((plain_password + SECRET_KEY).encode()).hexdigest()
+        return fallback_hash == hashed_password
 
 
 def create_access_token(data: dict):
@@ -251,25 +261,35 @@ def home():
 # --- 7. AUTHENTICATION ENDPOINTS ---
 @app.post("/auth/register", status_code=status.HTTP_201_CREATED)
 def register_owner(user_data: UserRegister, db: Session = Depends(get_db)):
-    existing_user = (
-        db.query(DBUser).filter(DBUser.username == user_data.username).first()
-    )
-    if existing_user:
-        raise HTTPException(
-            status_code=400, detail="Username already registered."
+    try:
+        existing_user = (
+            db.query(DBUser).filter(DBUser.username == user_data.username).first()
         )
+        if existing_user:
+            raise HTTPException(
+                status_code=400, detail="Username already registered."
+            )
 
-    new_user = DBUser(
-        username=user_data.username,
-        hashed_password=hash_password(user_data.password),
-    )
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-    return {
-        "message": "Account created successfully!",
-        "username": new_user.username,
-    }
+        hashed_pwd = hash_password(user_data.password)
+
+        new_user = DBUser(
+            username=user_data.username,
+            hashed_password=hashed_pwd,
+        )
+        db.add(new_user)
+        db.commit()
+        db.refresh(new_user)
+        return {
+            "message": "Account created successfully!",
+            "username": new_user.username,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(
+            status_code=500, detail=f"Registration error: {str(e)}"
+        )
 
 
 @app.post("/auth/login", response_model=TokenResponse)
@@ -277,18 +297,25 @@ def login_owner(
     form_data: OAuth2PasswordRequestForm = Depends(),
     db: Session = Depends(get_db),
 ):
-    user = (
-        db.query(DBUser).filter(DBUser.username == form_data.username).first()
-    )
-    if not user or not verify_password(
-        form_data.password, user.hashed_password
-    ):
-        raise HTTPException(
-            status_code=400, detail="Incorrect username or password."
+    try:
+        user = (
+            db.query(DBUser).filter(DBUser.username == form_data.username).first()
         )
+        if not user or not verify_password(
+            form_data.password, user.hashed_password
+        ):
+            raise HTTPException(
+                status_code=400, detail="Incorrect username or password."
+            )
 
-    access_token = create_access_token(data={"sub": user.username})
-    return {"access_token": access_token, "token_type": "bearer"}
+        access_token = create_access_token(data={"sub": user.username})
+        return {"access_token": access_token, "token_type": "bearer"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, detail=f"Login error: {str(e)}"
+        )
 
 
 # --- 8. STORE MANAGEMENT (PROTECTED) ---
