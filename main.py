@@ -4,7 +4,7 @@ from typing import List, Optional
 from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey, Boolean
+from sqlalchemy import create_engine, Column, Integer, String, Float, ForeignKey, Boolean, text
 from sqlalchemy.orm import declarative_base, sessionmaker, Session, relationship
 
 # --- 1. DATABASE SETUP (PostgreSQL / SQLite Fallback) ---
@@ -27,7 +27,7 @@ class DBStore(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     name = Column(String, index=True)
-    slug = Column(String, unique=True, index=True)  # e.g. "ahamed-bakery"
+    slug = Column(String, unique=True, index=True)  # e.g. "salma-bakery"
     whatsapp_number = Column(String)  # Format without + (e.g. 97455551234)
     currency = Column(String, default="USD")
     is_active = Column(Boolean, default=True)
@@ -43,13 +43,32 @@ class DBProduct(Base):
     name = Column(String, index=True)
     description = Column(String, nullable=True)
     price = Column(Float)
-    category = Column(String, default="General", index=True)  # Category support
+    category = Column(String, default="General", index=True)  # Category column
     in_stock = Column(Boolean, default=True)
 
     store = relationship("DBStore", back_populates="products")
 
 
+# Build missing tables if starting fresh
 Base.metadata.create_all(bind=engine)
+
+
+# AUTO-MIGRATION HELPER: Ensures 'category' column exists on PostgreSQL without dropping tables
+def run_auto_migrations():
+    db = SessionLocal()
+    try:
+        if "postgresql" in DATABASE_URL:
+            db.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS category VARCHAR DEFAULT 'General';"))
+            db.commit()
+            print("✅ Database auto-migration successful: 'category' column verified.")
+    except Exception as e:
+        db.rollback()
+        print(f"⚠️ Migration notice: {e}")
+    finally:
+        db.close()
+
+# Execute column migration check on application startup
+run_auto_migrations()
 
 
 # --- 3. SCHEMAS (Pydantic Models) ---
