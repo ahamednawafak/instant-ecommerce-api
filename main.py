@@ -85,30 +85,61 @@ class DBProduct(Base):
 Base.metadata.create_all(bind=engine)
 
 
-# Auto Migration for PostgreSQL
+# AUTO-MIGRATION HELPER: Ensures 'users' table and missing columns exist in PostgreSQL
 def run_auto_migrations():
     db = SessionLocal()
     try:
         if "postgresql" in DATABASE_URL:
-            db.execute(text("ALTER TABLE products ADD COLUMN IF NOT EXISTS category VARCHAR DEFAULT 'General';"))
-            db.execute(text("ALTER TABLE stores ADD COLUMN IF NOT EXISTS owner_id INTEGER;"))
+            # 1. Create users table if missing
+            db.execute(
+                text(
+                    """
+                CREATE TABLE IF NOT EXISTS users (
+                    id SERIAL PRIMARY KEY,
+                    username VARCHAR UNIQUE,
+                    hashed_password VARCHAR
+                );
+            """
+                )
+            )
+            # 2. Add missing columns to existing tables if needed
+            db.execute(
+                text(
+                    "ALTER TABLE products ADD COLUMN IF NOT EXISTS category"
+                    " VARCHAR DEFAULT 'General';"
+                )
+            )
+            db.execute(
+                text(
+                    "ALTER TABLE stores ADD COLUMN IF NOT EXISTS owner_id"
+                    " INTEGER;"
+                )
+            )
             db.commit()
+            print(
+                "✅ Database auto-migration successful: 'users' table and"
+                " columns verified."
+            )
     except Exception as e:
         db.rollback()
+        print(f"⚠️ Migration notice: {e}")
     finally:
         db.close()
+
 
 run_auto_migrations()
 
 
-# --- 4. SCHEMAS ---
+# --- 4. SCHEMAS (Pydantic Models) ---
 class UserRegister(BaseModel):
     username: str
     password: str
 
+
 class TokenResponse(BaseModel):
     access_token: str
     token_type: str
+
 
 class ProductCreate(BaseModel):
     name: str
@@ -117,6 +148,7 @@ class ProductCreate(BaseModel):
     category: Optional[str] = "General"
     in_stock: bool = True
 
+
 class ProductResponse(ProductCreate):
     id: int
     store_id: int
@@ -124,11 +156,13 @@ class ProductResponse(ProductCreate):
     class Config:
         from_attributes = True
 
+
 class StoreCreate(BaseModel):
     name: str
     slug: str
     whatsapp_number: str
     currency: str = "USD"
+
 
 class StoreResponse(StoreCreate):
     id: int
@@ -137,9 +171,11 @@ class StoreResponse(StoreCreate):
     class Config:
         from_attributes = True
 
+
 class CartItem(BaseModel):
     product_id: int
     quantity: int
+
 
 class CheckoutRequest(BaseModel):
     customer_name: str
@@ -157,11 +193,14 @@ def get_db():
     finally:
         db.close()
 
+
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)
 
+
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     return pwd_context.verify(plain_password, hashed_password)
+
 
 def create_access_token(data: dict):
     to_encode = data.copy()
@@ -169,7 +208,10 @@ def create_access_token(data: dict):
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> DBUser:
+
+def get_current_user(
+    token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)
+) -> DBUser:
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Invalid or expired authentication token",
@@ -209,69 +251,104 @@ def home():
 # --- 7. AUTHENTICATION ENDPOINTS ---
 @app.post("/auth/register", status_code=status.HTTP_201_CREATED)
 def register_owner(user_data: UserRegister, db: Session = Depends(get_db)):
-    existing_user = db.query(DBUser).filter(DBUser.username == user_data.username).first()
+    existing_user = (
+        db.query(DBUser).filter(DBUser.username == user_data.username).first()
+    )
     if existing_user:
-        raise HTTPException(status_code=400, detail="Username already registered.")
-    
+        raise HTTPException(
+            status_code=400, detail="Username already registered."
+        )
+
     new_user = DBUser(
         username=user_data.username,
-        hashed_password=hash_password(user_data.password)
+        hashed_password=hash_password(user_data.password),
     )
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
-    return {"message": "Account created successfully!", "username": new_user.username}
+    return {
+        "message": "Account created successfully!",
+        "username": new_user.username,
+    }
+
 
 @app.post("/auth/login", response_model=TokenResponse)
-def login_owner(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = db.query(DBUser).filter(DBUser.username == form_data.username).first()
-    if not user or not verify_password(form_data.password, user.hashed_password):
-        raise HTTPException(status_code=400, detail="Incorrect username or password.")
-    
+def login_owner(
+    form_data: OAuth2PasswordRequestForm = Depends(),
+    db: Session = Depends(get_db),
+):
+    user = (
+        db.query(DBUser).filter(DBUser.username == form_data.username).first()
+    )
+    if not user or not verify_password(
+        form_data.password, user.hashed_password
+    ):
+        raise HTTPException(
+            status_code=400, detail="Incorrect username or password."
+        )
+
     access_token = create_access_token(data={"sub": user.username})
     return {"access_token": access_token, "token_type": "bearer"}
 
 
 # --- 8. STORE MANAGEMENT (PROTECTED) ---
-@app.post("/stores", response_model=StoreResponse, status_code=status.HTTP_201_CREATED)
+@app.post(
+    "/stores",
+    response_model=StoreResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 def create_store(
-    store: StoreCreate, 
-    current_user: DBUser = Depends(get_current_user), 
-    db: Session = Depends(get_db)
+    store: StoreCreate,
+    current_user: DBUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     existing = db.query(DBStore).filter(DBStore.slug == store.slug).first()
     if existing:
-        raise HTTPException(status_code=400, detail="Store slug already exists.")
-    
+        raise HTTPException(
+            status_code=400, detail="Store slug already exists."
+        )
+
     db_store = DBStore(**store.model_dump(), owner_id=current_user.id)
     db.add(db_store)
     db.commit()
     db.refresh(db_store)
     return db_store
 
+
 @app.get("/stores/{slug}", response_model=StoreResponse)
 def get_store(slug: str, db: Session = Depends(get_db)):
-    store = db.query(DBStore).filter(DBStore.slug == slug, DBStore.is_active == True).first()
+    store = (
+        db.query(DBStore)
+        .filter(DBStore.slug == slug, DBStore.is_active == True)
+        .first()
+    )
     if not store:
         raise HTTPException(status_code=404, detail="Store not found.")
     return store
 
 
 # --- 9. PRODUCT CATALOG (PROTECTED MANAGEMENT / PUBLIC READING) ---
-@app.post("/stores/{slug}/products", response_model=ProductResponse, status_code=status.HTTP_201_CREATED)
+@app.post(
+    "/stores/{slug}/products",
+    response_model=ProductResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 def add_product(
-    slug: str, 
-    product: ProductCreate, 
-    current_user: DBUser = Depends(get_current_user), 
-    db: Session = Depends(get_db)
+    slug: str,
+    product: ProductCreate,
+    current_user: DBUser = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ):
     store = db.query(DBStore).filter(DBStore.slug == slug).first()
     if not store:
         raise HTTPException(status_code=404, detail="Store not found.")
-    
+
     # Verify the logged in user owns the store
     if store.owner_id and store.owner_id != current_user.id:
-        raise HTTPException(status_code=403, detail="You do not have permission to modify this store.")
+        raise HTTPException(
+            status_code=403,
+            detail="You do not have permission to modify this store.",
+        )
 
     db_product = DBProduct(**product.model_dump(), store_id=store.id)
     db.add(db_product)
@@ -279,39 +356,49 @@ def add_product(
     db.refresh(db_product)
     return db_product
 
+
 @app.get("/stores/{slug}/products", response_model=List[ProductResponse])
-def list_products(slug: str, category: Optional[str] = None, db: Session = Depends(get_db)):
+def list_products(
+    slug: str, category: Optional[str] = None, db: Session = Depends(get_db)
+):
     store = db.query(DBStore).filter(DBStore.slug == slug).first()
     if not store:
         raise HTTPException(status_code=404, detail="Store not found.")
-    
-    query = db.query(DBProduct).filter(DBProduct.store_id == store.id, DBProduct.in_stock == True)
+
+    query = db.query(DBProduct).filter(
+        DBProduct.store_id == store.id, DBProduct.in_stock == True
+    )
     if category:
         query = query.filter(DBProduct.category == category)
-        
+
     return query.all()
+
 
 @app.get("/stores/{slug}/categories")
 def list_categories(slug: str, db: Session = Depends(get_db)):
     store = db.query(DBStore).filter(DBStore.slug == slug).first()
     if not store:
         raise HTTPException(status_code=404, detail="Store not found.")
-    
-    categories = db.query(DBProduct.category).filter(
-        DBProduct.store_id == store.id, 
-        DBProduct.in_stock == True
-    ).distinct().all()
-    
+
+    categories = (
+        db.query(DBProduct.category)
+        .filter(DBProduct.store_id == store.id, DBProduct.in_stock == True)
+        .distinct()
+        .all()
+    )
+
     return [c[0] for c in categories if c[0]]
 
 
 # --- 10. PUBLIC WHATSAPP CHECKOUT ENGINE ---
 @app.post("/stores/{slug}/checkout/whatsapp")
-def generate_whatsapp_order_link(slug: str, checkout: CheckoutRequest, db: Session = Depends(get_db)):
+def generate_whatsapp_order_link(
+    slug: str, checkout: CheckoutRequest, db: Session = Depends(get_db)
+):
     store = db.query(DBStore).filter(DBStore.slug == slug).first()
     if not store:
         raise HTTPException(status_code=404, detail="Store not found.")
-    
+
     if not checkout.items:
         raise HTTPException(status_code=400, detail="Cart is empty.")
 
@@ -319,10 +406,21 @@ def generate_whatsapp_order_link(slug: str, checkout: CheckoutRequest, db: Sessi
     total_price = 0.0
 
     for item in checkout.items:
-        product = db.query(DBProduct).filter(DBProduct.id == item.product_id, DBProduct.store_id == store.id).first()
+        product = (
+            db.query(DBProduct)
+            .filter(
+                DBProduct.id == item.product_id, DBProduct.store_id == store.id
+            )
+            .first()
+        )
         if not product:
-            raise HTTPException(status_code=400, detail=f"Product ID {item.product_id} not found in this store.")
-        
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Product ID {item.product_id} not found in this store."
+                ),
+            )
+
         item_total = product.price * item.quantity
         total_price += item_total
         order_items_text += f"• {item.quantity}x {product.name} ({store.currency} {item_total:.2f})\n"
@@ -334,7 +432,7 @@ def generate_whatsapp_order_link(slug: str, checkout: CheckoutRequest, db: Sessi
         f"📞 *Phone:* {checkout.customer_phone}\n"
         f"📍 *Address:* {checkout.delivery_address}\n"
     )
-    
+
     if checkout.notes:
         message += f"📝 *Notes:* {checkout.notes}\n"
 
@@ -348,12 +446,14 @@ def generate_whatsapp_order_link(slug: str, checkout: CheckoutRequest, db: Sessi
     )
 
     encoded_message = quote(message)
-    whatsapp_url = f"https://wa.me/{store.whatsapp_number}?text={encoded_message}"
+    whatsapp_url = (
+        f"https://wa.me/{store.whatsapp_number}?text={encoded_message}"
+    )
 
     return {
         "store_name": store.name,
         "total_amount": total_price,
         "currency": store.currency,
         "raw_message": message,
-        "whatsapp_redirect_url": whatsapp_url
+        "whatsapp_redirect_url": whatsapp_url,
     }
