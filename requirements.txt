@@ -5,3 +5,4 @@ psycopg2-binary
 pydantic
 pyjwt
 passlib[bcrypt]
+python-multipart
