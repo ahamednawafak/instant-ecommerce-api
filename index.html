@@ -26,7 +26,7 @@
 
     .store-container {
       width: 100%;
-      max-width: 600px;
+      max-width: 650px;
       background: var(--card-bg);
       border-radius: 16px;
       padding: 24px;
@@ -47,6 +47,9 @@
       font-size: 1.1rem;
       font-weight: 600;
       margin-bottom: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
     }
 
     /* Category Navigation Tabs */
@@ -88,21 +91,13 @@
     }
 
     .product-card {
-      border: 2px solid var(--border);
+      border: 1px solid var(--border);
       border-radius: 12px;
       padding: 14px;
-      cursor: pointer;
-      transition: all 0.2s ease;
       display: flex;
       justify-content: space-between;
       align-items: center;
-    }
-
-    .product-card:hover { border-color: #cbd5e1; }
-
-    .product-card.selected {
-      border-color: var(--primary);
-      background-color: #f0fdf4;
+      background: white;
     }
 
     .product-info h3 { margin: 0 0 4px 0; font-size: 1rem; }
@@ -117,7 +112,75 @@
       font-weight: 500;
     }
 
+    .product-right {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 8px;
+    }
+
     .product-price { font-weight: 700; font-size: 1.05rem; color: var(--text); }
+
+    /* Quantity Controls */
+    .qty-controls {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: #f1f5f9;
+      border-radius: 8px;
+      padding: 2px 6px;
+    }
+
+    .qty-btn {
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      width: 28px;
+      height: 28px;
+      font-weight: 700;
+      font-size: 1rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #334155;
+    }
+
+    .qty-btn:hover { background: #e2e8f0; }
+
+    .qty-count {
+      font-weight: 700;
+      font-size: 0.95rem;
+      min-width: 20px;
+      text-align: center;
+    }
+
+    /* Shopping Cart Drawer Summary */
+    .cart-summary {
+      background: #f0fdf4;
+      border: 1px solid #bbf7d0;
+      border-radius: 12px;
+      padding: 14px;
+      margin-bottom: 24px;
+    }
+
+    .cart-item-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.9rem;
+      margin-bottom: 6px;
+    }
+
+    .cart-total-row {
+      display: flex;
+      justify-content: space-between;
+      font-weight: 700;
+      font-size: 1.05rem;
+      border-top: 1px dashed #a7f3d0;
+      padding-top: 8px;
+      margin-top: 8px;
+      color: #166534;
+    }
 
     /* Checkout Form */
     .form-group { margin-bottom: 14px; }
@@ -145,6 +208,7 @@
     }
 
     .checkout-btn:hover { background-color: var(--primary-dark); }
+    .checkout-btn:disabled { background-color: #94a3b8; cursor: not-allowed; }
     #status { margin-top: 12px; text-align: center; font-size: 0.9rem; font-weight: 600; }
   </style>
 </head>
@@ -153,10 +217,10 @@
 <div class="store-container">
   <div class="header">
     <h1>🧁 Ahamed Bakery</h1>
-    <p>Select products and checkout directly via WhatsApp</p>
+    <p>Select your items, adjust quantities, and checkout via WhatsApp</p>
   </div>
 
-  <div class="section-title">1. Select an Item</div>
+  <div class="section-title">1. Menu</div>
 
   <!-- Dynamic Category Tabs -->
   <div id="categoryTabs" class="category-tabs">
@@ -165,10 +229,20 @@
   
   <!-- Dynamic Product Grid -->
   <div id="catalog" class="product-grid">
-    <p>⏳ Connecting to server... (If sleeping, may take 30s)</p>
+    <p>⏳ Loading store menu...</p>
   </div>
 
-  <div class="section-title">2. Delivery Information</div>
+  <!-- Cart Order Summary -->
+  <div class="section-title">
+    <span>2. Cart Summary</span>
+    <span id="cartCountBadge" style="font-size:0.85rem; font-weight:normal; color:#64748b;">0 items</span>
+  </div>
+
+  <div class="cart-summary" id="cartSummary">
+    <p style="margin:0; color:#64748b; font-size:0.9rem;">Your cart is empty. Add items from the menu above.</p>
+  </div>
+
+  <div class="section-title">3. Delivery Information</div>
 
   <form id="checkoutForm">
     <div class="form-group">
@@ -191,7 +265,7 @@
       <input type="text" id="notes" placeholder="e.g. Please write 'Happy Birthday' on top">
     </div>
 
-    <button type="submit" class="checkout-btn">📲 Place WhatsApp Order</button>
+    <button type="submit" id="submitBtn" class="checkout-btn" disabled>📲 Place WhatsApp Order</button>
   </form>
 
   <div id="status"></div>
@@ -201,13 +275,13 @@
   const STORE_SLUG = "ahamed-bakery";
   const API_BASE = "https://instant-ecommerce-api.onrender.com";
   
-  let selectedProductId = null;
+  let allProducts = [];
+  let cart = {}; // Object mapping product_id -> quantity { 1: 2, 3: 1 }
 
-  // Safe fetch helper that gracefully traps network issues
   async function safeFetch(url) {
     try {
       const response = await fetch(url);
-      if (!response.ok) return { error: true, status: response.status };
+      if (!response.ok) return { error: true };
       const data = await response.json();
       return { error: false, data };
     } catch (err) {
@@ -215,7 +289,7 @@
     }
   }
 
-  // 1. FETCH CATEGORIES: GET /stores/{slug}/categories
+  // 1. FETCH CATEGORIES
   async function loadCategories() {
     const tabsContainer = document.getElementById("categoryTabs");
     const result = await safeFetch(`${API_BASE}/stores/${STORE_SLUG}/categories`);
@@ -236,10 +310,10 @@
     `;
   }
 
-  // 2. FETCH PRODUCTS: GET /stores/{slug}/products
+  // 2. FETCH PRODUCTS
   async function loadCatalog(category = null) {
     const catalogDiv = document.getElementById("catalog");
-    catalogDiv.innerHTML = "<p>⏳ Loading store menu...</p>";
+    catalogDiv.innerHTML = "<p>⏳ Loading menu items...</p>";
 
     let url = `${API_BASE}/stores/${STORE_SLUG}/products`;
     if (category) {
@@ -252,33 +326,108 @@
       catalogDiv.innerHTML = `
         <div style="background: #fef2f2; border: 1px solid #fca5a5; padding: 12px; border-radius: 8px; color: #991b1b;">
           <strong>⚠️ Store Unavailable or Sleeping</strong><br>
-          <small>Server is waking up or store slug "${STORE_SLUG}" needs to be registered in PostgreSQL.</small>
+          <small>Server is waking up or store slug needs registration.</small>
         </div>
       `;
-      selectedProductId = null;
       return;
     }
 
-    const products = result.data;
+    allProducts = result.data;
 
-    if (products.length === 0) {
+    if (allProducts.length === 0) {
       catalogDiv.innerHTML = "<p>No products available in this category.</p>";
-      selectedProductId = null;
       return;
     }
 
-    catalogDiv.innerHTML = products.map((product, index) => `
-      <div class="product-card ${index === 0 ? 'selected' : ''}" onclick="selectProduct(${product.id}, this)">
-        <div class="product-info">
-          <h3>${product.name}</h3>
-          <p>${product.description || 'Freshly prepared'}</p>
-          <span class="badge">${product.category || 'General'}</span>
-        </div>
-        <div class="product-price">QAR ${product.price.toFixed(2)}</div>
-      </div>
-    `).join("");
+    renderProducts(allProducts);
+  }
 
-    selectedProductId = products[0].id;
+  function renderProducts(products) {
+    const catalogDiv = document.getElementById("catalog");
+    catalogDiv.innerHTML = products.map(product => {
+      const qty = cart[product.id] || 0;
+      return `
+        <div class="product-card">
+          <div class="product-info">
+            <h3>${product.name}</h3>
+            <p>${product.description || 'Freshly prepared'}</p>
+            <span class="badge">${product.category || 'General'}</span>
+          </div>
+          <div class="product-right">
+            <div class="product-price">QAR ${product.price.toFixed(2)}</div>
+            <div class="qty-controls">
+              <button type="button" class="qty-btn" onclick="updateQty(${product.id}, -1)">−</button>
+              <span class="qty-count" id="qty-${product.id}">${qty}</span>
+              <button type="button" class="qty-btn" onclick="updateQty(${product.id}, 1)">+</button>
+            </div>
+          </div>
+        </div>
+      `;
+    }).join("");
+  }
+
+  // Quantity Management
+  function updateQty(productId, delta) {
+    const currentQty = cart[productId] || 0;
+    const newQty = Math.max(0, currentQty + delta);
+
+    if (newQty === 0) {
+      delete cart[productId];
+    } else {
+      cart[productId] = newQty;
+    }
+
+    const qtySpan = document.getElementById(`qty-${productId}`);
+    if (qtySpan) qtySpan.innerText = newQty;
+
+    updateCartSummary();
+  }
+
+  // Render Cart Summary
+  function updateCartSummary() {
+    const summaryDiv = document.getElementById("cartSummary");
+    const submitBtn = document.getElementById("submitBtn");
+    const countBadge = document.getElementById("cartCountBadge");
+
+    const cartProductIds = Object.keys(cart);
+    
+    if (cartProductIds.length === 0) {
+      summaryDiv.innerHTML = `<p style="margin:0; color:#64748b; font-size:0.9rem;">Your cart is empty. Add items from the menu above.</p>`;
+      submitBtn.disabled = true;
+      countBadge.innerText = "0 items";
+      return;
+    }
+
+    let totalAmount = 0;
+    let totalItemsCount = 0;
+    let html = "";
+
+    cartProductIds.forEach(id => {
+      const qty = cart[id];
+      const product = allProducts.find(p => p.id === parseInt(id));
+      if (product) {
+        const itemTotal = product.price * qty;
+        totalAmount += itemTotal;
+        totalItemsCount += qty;
+        html += `
+          <div class="cart-item-row">
+            <span>• ${qty}x ${product.name}</span>
+            <span>QAR ${itemTotal.toFixed(2)}</span>
+          </div>
+        `;
+      }
+    });
+
+    html += `
+      <div class="cart-total-row">
+        <span>Total Amount</span>
+        <span>QAR ${totalAmount.toFixed(2)}</span>
+      </div>
+    `;
+
+    summaryDiv.innerHTML = html;
+    submitBtn.disabled = false;
+    countBadge.innerText = `${totalItemsCount} item${totalItemsCount > 1 ? 's' : ''}`;
   }
 
   function filterByCategory(category, buttonElement) {
@@ -287,36 +436,30 @@
     loadCatalog(category);
   }
 
-  function selectProduct(id, cardElement) {
-    document.querySelectorAll('.product-card').forEach(c => c.classList.remove('selected'));
-    cardElement.classList.add('selected');
-    selectedProductId = id;
-  }
-
-  // 3. SUBMIT CHECKOUT TO API
+  // 3. SUBMIT MULTI-ITEM CHECKOUT TO API
   document.getElementById("checkoutForm").addEventListener("submit", async (e) => {
     e.preventDefault();
 
-    if (!selectedProductId) {
-      alert("Please select a valid product first.");
+    const cartItems = Object.keys(cart).map(id => ({
+      product_id: parseInt(id),
+      quantity: cart[id]
+    }));
+
+    if (cartItems.length === 0) {
+      alert("Your cart is empty. Please select at least one item.");
       return;
     }
 
     const statusDiv = document.getElementById("status");
     statusDiv.style.color = "#0284c7";
-    statusDiv.innerText = "Connecting to API and generating order link...";
+    statusDiv.innerText = "Connecting to API and generating multi-item checkout link...";
 
     const payload = {
       customer_name: document.getElementById("name").value,
       customer_phone: document.getElementById("phone").value,
       delivery_address: document.getElementById("address").value,
       notes: document.getElementById("notes").value || null,
-      items: [
-        {
-          product_id: selectedProductId,
-          quantity: 1
-        }
-      ]
+      items: cartItems
     };
 
     try {
@@ -331,7 +474,7 @@
       const data = await response.json();
 
       statusDiv.style.color = "#16a34a";
-      statusDiv.innerText = "Order created! Launching WhatsApp...";
+      statusDiv.innerText = "Order created! Redirecting to WhatsApp...";
 
       window.location.href = data.whatsapp_redirect_url;
 
